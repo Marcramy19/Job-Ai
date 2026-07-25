@@ -7,21 +7,36 @@ from telegram import Bot
 from groq import Groq
 
 # ==========================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION - MATCHING YOUR CV
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 MY_CV = """
-Senior Python Developer with 4 years of experience. 
-Skills: Python, Django, FastAPI, React, PostgreSQL, Docker, AWS.
-Looking for remote or hybrid roles in Cairo. 
-Expected salary: 30,000+ EGP.
+Sarah Samir PMP - CX and Operations Leader
+Extensive BPO and Program Management experience
+Certified PMP, Six Sigma, COPC professional
+Specialized in:
+- Operations Management
+- Program/Project Management
+- Customer Experience (CX) Management
+- Contact Center Operations
+- Quality & Training Management
+- Business Process Outsourcing (BPO)
+- Team Leadership (multi-site, multicultural)
+- Client Relationship Management
+- Workforce Management
+- Sales Operations & E-commerce
+- French language support operations
+Looking for: Operations Manager, Program Manager, CX Manager, Contact Center Manager roles
+Location: Cairo, Egypt (or Remote)
+Expected salary: Competitive
 """
 
-SEARCH_KEYWORDS = "Python Django"
-MAX_JOB_AGE_DAYS = 7  # Only show jobs posted in the last 7 days
+# KEYWORDS MATCHING YOUR PROFILE
+SEARCH_KEYWORDS = "Operations Manager Program Manager CX Manager Contact Center"
+MAX_JOB_AGE_DAYS = 14  # Last 2 weeks for management roles
 
 # ==========================================
 # 2. AI MATCHING (Groq Free API)
@@ -36,19 +51,21 @@ def analyze_job_with_ai(job_raw_text):
     Here is the raw text of a job posting: {job_raw_text}
 
     IMPORTANT REQUIREMENTS:
-    1. Location MUST be in Cairo, Egypt (or fully remote)
+    1. Location MUST be: Cairo/Egypt, OR Remote, OR "Middle East/North Africa" region
     2. Job should be recently posted (extract the posting date if available)
+    3. Role should match: Operations Management, Program Management, CX, Contact Center, BPO, Project Management
     
     Analyze the job and return a JSON object with:
     - "title": Job title
     - "company": Company name
-    - "location": Exact location as stated (must include Cairo/Egypt or Remote)
+    - "location": Exact location as stated
     - "salary": Salary if mentioned, otherwise "Not stated"
-    - "posted_date": The posting date if available (e.g., "2 days ago", "Jan 15, 2026"), otherwise "Unknown"
+    - "posted_date": The posting date if available, otherwise "Unknown"
     - "description": A brief 2-3 sentence summary
     - "link": The URL to apply
     - "match_score": Integer 0-100 for CV match
-    - "is_cairo_location": true/false (true ONLY if location is Cairo, Egypt, Giza, Alexandria, or fully Remote)
+    - "is_valid_location": true/false (true ONLY if: Cairo, Egypt, Giza, Alexandria, Remote, MENA region, OR remote-friendly)
+    - "is_remote": true/false (true if job mentions Remote, Work from Home, WFH, Virtual)
     - "reason": 1-sentence explanation of the score
 
     Return ONLY valid JSON.
@@ -69,11 +86,10 @@ def analyze_job_with_ai(job_raw_text):
 def is_job_recent(posted_date_str):
     """Check if the job was posted within MAX_JOB_AGE_DAYS"""
     if not posted_date_str or posted_date_str.lower() == "unknown":
-        return True  # If date unknown, include it but flag it
+        return True
     
     posted_date_str = posted_date_str.lower()
     
-    # Handle relative dates like "2 days ago", "1 week ago"
     if "day" in posted_date_str:
         try:
             days_ago = int(''.join(filter(str.isdigit, posted_date_str)))
@@ -84,27 +100,14 @@ def is_job_recent(posted_date_str):
     if "week" in posted_date_str:
         try:
             weeks_ago = int(''.join(filter(str.isdigit, posted_date_str)))
-            return weeks_ago == 0  # Only this week
+            return weeks_ago <= 2  # Within 2 weeks
         except:
             return True
     
-    if "month" in posted_date_str or "hour" in posted_date_str:
-        # If it mentions months, it's too old. Hours are fine.
-        return "month" not in posted_date_str
+    if "month" in posted_date_str:
+        return False  # Too old
     
-    # Try to parse absolute dates (e.g., "Jan 15, 2026")
-    try:
-        # Common date formats
-        for fmt in ["%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%Y-%m-%d"]:
-            try:
-                posted_date = datetime.strptime(posted_date_str.strip(), fmt)
-                age = datetime.now() - posted_date
-                return age.days <= MAX_JOB_AGE_DAYS
-            except:
-                continue
-        return True  # If can't parse, include it
-    except:
-        return True
+    return True
 
 # ==========================================
 # 3. TELEGRAM NOTIFICATION
@@ -112,18 +115,18 @@ def is_job_recent(posted_date_str):
 async def send_job_to_telegram(job_data):
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # Add age warning if date is unknown
+    remote_badge = "🌍 *REMOTE*" if job_data.get('is_remote', False) else ""
     age_note = ""
     if not job_data.get('posted_date') or job_data.get('posted_date', '').lower() == "unknown":
         age_note = "\n⚠️ *Note:* Posting date not available"
     
     message = (
-        f"💼 *{job_data['title']}*\n"
+        f"💼 *{job_data['title']}* {remote_badge}\n"
         f"🏢 *Company:* {job_data['company']}\n"
         f"📍 *Location:* {job_data['location']}\n"
-        f"💰 *Salary:* {job_data['salary']}\n"
-        f" *Posted:* {job_data.get('posted_date', 'Unknown')}\n"
-        f" *Match Score:* {job_data['match_score']}%\n\n"
+        f" *Salary:* {job_data['salary']}\n"
+        f"📅 *Posted:* {job_data.get('posted_date', 'Unknown')}\n"
+        f"🎯 *Match Score:* {job_data['match_score']}%\n\n"
         f"📝 *Summary:* {job_data['description']}\n\n"
         f"🔗 *Apply Here:* {job_data['link']}"
         f"{age_note}"
@@ -141,7 +144,7 @@ async def test_telegram():
     try:
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
-            text="✅ **TEST SUCCESSFUL!** Your Job Bot is working!\n\n📋 Filters active:\n• Location: Cairo/Egypt only\n• Max age: 7 days",
+            text="✅ **TEST SUCCESSFUL!** Your Job Bot is working!\n\n📋 Filters active:\n• Roles: Operations/Program/CX Management\n• Location: Cairo/Egypt OR Remote\n• Max age: 14 days",
             parse_mode='Markdown'
         )
         print("✅ Telegram test message sent!")
@@ -154,7 +157,7 @@ async def test_telegram():
 # 4. WEB SCRAPER (LinkedIn & Indeed)
 # ==========================================
 async def scrape_linkedin_jobs():
-    """Scrape LinkedIn Jobs for Cairo"""
+    """Scrape LinkedIn Jobs for Operations/Program Management roles"""
     print("🔍 Scraping LinkedIn Jobs...")
     
     async with async_playwright() as p:
@@ -165,9 +168,10 @@ async def scrape_linkedin_jobs():
         )
         page = await context.new_page()
         
-        # LinkedIn search URL for Python Django jobs in Cairo, Egypt (sorted by date)
-        url = f"https://www.linkedin.com/jobs/search/?keywords={SEARCH_KEYWORDS.replace(' ', '%20')}&location=Cairo%2C%20Egypt&geoId=101165590&f_TPR=r604800&sortBy=DD"
-        # f_TPR=r604800 means "past week" (604800 seconds = 7 days)
+        # LinkedIn search for Operations/Program Manager in Egypt + Remote
+        # Search in Egypt location but also include remote
+        url = f"https://www.linkedin.com/jobs/search/?keywords={SEARCH_KEYWORDS.replace(' ', '%20')}&location=Egypt&f_WT=1,2,3&sortBy=DD"
+        # f_WT=1,2,3 means: On-site, Hybrid, AND Remote
         # sortBy=DD means "Most recent"
         
         try:
@@ -180,8 +184,8 @@ async def scrape_linkedin_jobs():
             jobs_sent = 0
             jobs_filtered = 0
             
-            for i, card in enumerate(job_cards[:15]):  # Check first 15 jobs
-                print(f"  Analyzing job {i+1}/{min(15, len(job_cards))}...")
+            for i, card in enumerate(job_cards[:20]):
+                print(f"  Analyzing job {i+1}/{min(20, len(job_cards))}...")
                 
                 try:
                     raw_text = await card.inner_text()
@@ -198,22 +202,22 @@ async def scrape_linkedin_jobs():
                     if not job_data:
                         continue
                     
-                    # STRICT FILTERS:
-                    # 1. Must be Cairo/Egypt location
-                    if not job_data.get('is_cairo_location', False):
-                        print(f"    ❌ Filtered out: Not in Cairo (location: {job_data.get('location', 'Unknown')})")
+                    # FILTERS:
+                    # 1. Must be valid location (Egypt/Cairo/Remote/MENA)
+                    if not job_data.get('is_valid_location', False):
+                        print(f"    ❌ Filtered: Invalid location ({job_data.get('location', 'Unknown')})")
                         jobs_filtered += 1
                         continue
                     
-                    # 2. Must be recent job
+                    # 2. Must be recent
                     if not is_job_recent(job_data.get('posted_date', '')):
-                        print(f"    ❌ Filtered out: Too old (posted: {job_data.get('posted_date', 'Unknown')})")
+                        print(f"    ❌ Filtered: Too old ({job_data.get('posted_date', 'Unknown')})")
                         jobs_filtered += 1
                         continue
                     
-                    # 3. Match score must be >= 50
+                    # 3. Match score >= 50
                     if job_data.get("match_score", 0) < 50:
-                        print(f"    ❌ Filtered out: Low match score ({job_data.get('match_score')}%)")
+                        print(f"    ❌ Filtered: Low match ({job_data.get('match_score')}%)")
                         jobs_filtered += 1
                         continue
                     
@@ -221,23 +225,20 @@ async def scrape_linkedin_jobs():
                     jobs_sent += 1
                     
                 except Exception as e:
-                    print(f"    ⚠️ Error processing job: {e}")
+                    print(f"    ⚠️ Error: {e}")
                     continue
             
-            print(f"✅ LinkedIn scraping complete.")
-            print(f"   📤 Sent: {jobs_sent} jobs")
-            print(f"   🚫 Filtered: {jobs_filtered} jobs")
-            
+            print(f"✅ LinkedIn complete. Sent: {jobs_sent}, Filtered: {jobs_filtered}")
             await browser.close()
             return jobs_sent
             
         except Exception as e:
-            print(f"❌ LinkedIn scraping failed: {e}")
+            print(f"❌ LinkedIn failed: {e}")
             await browser.close()
             return 0
 
 async def scrape_indeed_jobs():
-    """Scrape Indeed Egypt for Cairo jobs"""
+    """Scrape Indeed Egypt for Operations/Management roles"""
     print("🔍 Scraping Indeed Egypt...")
     
     async with async_playwright() as p:
@@ -248,10 +249,8 @@ async def scrape_indeed_jobs():
         )
         page = await context.new_page()
         
-        # Indeed Egypt search URL - Cairo only, last 7 days, sorted by date
-        url = f"https://eg.indeed.com/jobs?q={SEARCH_KEYWORDS.replace(' ', '%20')}&l=Cairo&fromage=7&sort=date"
-        # fromage=7 means "last 7 days"
-        # sort=date means "sorted by date"
+        # Indeed Egypt - Cairo + Remote, last 14 days
+        url = f"https://eg.indeed.com/jobs?q={SEARCH_KEYWORDS.replace(' ', '%20')}&l=Cairo&fromage=14&sort=date"
         
         try:
             await page.goto(url, timeout=60000, wait_until="domcontentloaded")
@@ -263,8 +262,8 @@ async def scrape_indeed_jobs():
             jobs_sent = 0
             jobs_filtered = 0
             
-            for i, card in enumerate(job_cards[:15]):
-                print(f"  Analyzing job {i+1}/{min(15, len(job_cards))}...")
+            for i, card in enumerate(job_cards[:20]):
+                print(f"  Analyzing job {i+1}/{min(20, len(job_cards))}...")
                 
                 try:
                     raw_text = await card.inner_text()
@@ -281,19 +280,18 @@ async def scrape_indeed_jobs():
                     if not job_data:
                         continue
                     
-                    # STRICT FILTERS:
-                    if not job_data.get('is_cairo_location', False):
-                        print(f"    ❌ Filtered out: Not in Cairo (location: {job_data.get('location', 'Unknown')})")
+                    if not job_data.get('is_valid_location', False):
+                        print(f"    ❌ Filtered: Invalid location ({job_data.get('location', 'Unknown')})")
                         jobs_filtered += 1
                         continue
                     
                     if not is_job_recent(job_data.get('posted_date', '')):
-                        print(f"    ❌ Filtered out: Too old (posted: {job_data.get('posted_date', 'Unknown')})")
+                        print(f"    ❌ Filtered: Too old ({job_data.get('posted_date', 'Unknown')})")
                         jobs_filtered += 1
                         continue
                     
                     if job_data.get("match_score", 0) < 50:
-                        print(f"    ❌ Filtered out: Low match score ({job_data.get('match_score')}%)")
+                        print(f"    ❌ Filtered: Low match ({job_data.get('match_score')}%)")
                         jobs_filtered += 1
                         continue
                     
@@ -301,18 +299,15 @@ async def scrape_indeed_jobs():
                     jobs_sent += 1
                     
                 except Exception as e:
-                    print(f"    ⚠️ Error processing job: {e}")
+                    print(f"    ⚠️ Error: {e}")
                     continue
             
-            print(f"✅ Indeed scraping complete.")
-            print(f"   📤 Sent: {jobs_sent} jobs")
-            print(f"   🚫 Filtered: {jobs_filtered} jobs")
-            
+            print(f"✅ Indeed complete. Sent: {jobs_sent}, Filtered: {jobs_filtered}")
             await browser.close()
             return jobs_sent
             
         except Exception as e:
-            print(f"❌ Indeed scraping failed: {e}")
+            print(f"❌ Indeed failed: {e}")
             await browser.close()
             return 0
 
@@ -320,32 +315,27 @@ async def scrape_indeed_jobs():
 # 5. MAIN EXECUTION
 # ==========================================
 async def main():
-    print(" AI Job Agent is starting in the cloud...")
-    print(f"📍 Location filter: Cairo/Egypt only")
+    print("🤖 AI Job Agent is starting in the cloud...")
+    print(f" Target roles: Operations/Program/CX Management")
+    print(f"📍 Location: Cairo/Egypt OR Remote")
     print(f"📅 Max job age: {MAX_JOB_AGE_DAYS} days")
     
-    # Test Telegram first
     telegram_ok = await test_telegram()
     if not telegram_ok:
-        print(" Stopping: Telegram is not working. Check your BOT_TOKEN and CHAT_ID.")
+        print("❌ Stopping: Telegram not working")
         return
     
-    # Try LinkedIn first, then Indeed as fallback
     linkedin_jobs = await scrape_linkedin_jobs()
     
     if linkedin_jobs == 0:
-        print("⚠️ No LinkedIn jobs found or error occurred. Trying Indeed...")
+        print("⚠️ Trying Indeed...")
         await asyncio.sleep(5)
         indeed_jobs = await scrape_indeed_jobs()
         
         if indeed_jobs == 0:
-            print("⚠️ No jobs found on either platform that match your filters.")
-            print("   Try:")
-            print("   - Widening MAX_JOB_AGE_DAYS")
-            print("   - Changing SEARCH_KEYWORDS")
-            print("   - Checking if sites are blocking GitHub IPs")
+            print("⚠️ No matching jobs found. Try adjusting keywords.")
     else:
-        print(f"🎉 Successfully found and sent {linkedin_jobs} jobs!")
+        print(f"🎉 Successfully sent {linkedin_jobs} jobs!")
 
 if __name__ == "__main__":
     asyncio.run(main())
