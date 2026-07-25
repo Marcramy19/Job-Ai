@@ -1,0 +1,81 @@
+name: Telegram Bot Listener
+
+on:
+  # Checks Telegram every 5 minutes for a command
+  schedule:
+    - cron: '*/5 * * * *'
+  # Allows you to manually trigger the listener from GitHub if needed
+  workflow_dispatch:
+
+jobs:
+  listen-and-trigger:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check Telegram and Trigger Scraper
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          REPO_OWNER: "Marcramy19"
+          REPO_NAME: "Job-Ai"
+          WORKFLOW_FILE: "scraper.yml" 
+        run: |
+          python -c "
+          import os, requests
+          from datetime import datetime, timezone
+
+          BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+          GH_PAT = os.environ.get('GH_PAT')
+          OWNER = os.environ.get('REPO_OWNER')
+          REPO = os.environ.get('REPO_NAME')
+          WORKFLOW = os.environ.get('WORKFLOW_FILE')
+
+          # 1. Get recent Telegram updates
+          url = f'https://api.telegram.org/bot{BOT_TOKEN}/getUpdates'
+          response = requests.get(url).json()
+          
+          if not response.get('ok'):
+              print('Failed to get Telegram updates')
+              exit(0)
+
+          triggered = False
+          # 2. Check for /start or 'run' commands
+          for update in response.get('result', []):
+              if 'message' in update:
+                  text = update['message'].get('text', '').lower().strip()
+                  msg_date = update['message']['date']
+                  
+                  # Only trigger if the message was sent in the last 10 minutes
+                  if datetime.now(timezone.utc).timestamp() - msg_date < 600:
+                      if text in ['/start', '/run', 'start', 'run']:
+                          print(f'Command received: {text}')
+                          
+                          # 3. Trigger the main scraper workflow via GitHub API
+                          api_url = f'https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/{WORKFLOW}/dispatches'
+                          headers = {
+                              'Authorization': f'token {GH_PAT}',
+                              'Accept': 'application/vnd.github.v3+json'
+                          }
+                          data = {'ref': 'main'}
+                          
+                          trigger_resp = requests.post(api_url, headers=headers, json=data)
+                          if trigger_resp.status_code == 204:
+                              print('✅ Successfully triggered the Job Scraper!')
+                              triggered = True
+                          else:
+                              print(f'❌ Failed to trigger: {trigger_resp.status_code} - {trigger_resp.text}')
+
+          if not triggered:
+              print('No new commands found. Waiting...')
+          "
